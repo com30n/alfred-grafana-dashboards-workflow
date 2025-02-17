@@ -24,6 +24,7 @@ During installation, set the following required variables:
 
 If your Grafana instance is protected by HTTP basic auth, set the following variables:
 
+* `GRAFANA_API_TOKEN` - optional OR:
 * `GRAFANA_BASIC_AUTH_USER` - optional
 * `GRAFANA_BASIC_AUTH_PASSWORD` - optional
 
