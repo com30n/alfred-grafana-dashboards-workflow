@@ -4,8 +4,6 @@
 <dict>
 	<key>bundleid</key>
 	<string>com.leejones.grafana-dashboards</string>
-	<key>category</key>
-	<string>Tools</string>
 	<key>connections</key>
 	<dict>
 		<key>34E356C6-0798-4CD8-B76F-0F9F33B3C373</key>
@@ -37,12 +35,14 @@
 			<dict>
 				<key>browser</key>
 				<string></string>
+				<key>skipqueryencode</key>
+				<false/>
+				<key>skipvarencode</key>
+				<false/>
 				<key>spaces</key>
 				<string></string>
 				<key>url</key>
 				<string>{query}</string>
-				<key>utf8</key>
-				<true/>
 			</dict>
 			<key>type</key>
 			<string>alfred.workflow.action.openurl</string>
@@ -55,7 +55,7 @@
 			<key>config</key>
 			<dict>
 				<key>alfredfiltersresults</key>
-				<true/>
+				<false/>
 				<key>alfredfiltersresultsmatchmode</key>
 				<integer>2</integer>
 				<key>argumenttreatemptyqueryasnil</key>
@@ -67,19 +67,19 @@
 				<key>escaping</key>
 				<integer>102</integer>
 				<key>keyword</key>
-				<string>grafana-dashboards</string>
+				<string>gd</string>
 				<key>queuedelaycustom</key>
-				<integer>3</integer>
+				<integer>4</integer>
 				<key>queuedelayimmediatelyinitially</key>
 				<true/>
 				<key>queuedelaymode</key>
-				<integer>0</integer>
+				<integer>2</integer>
 				<key>queuemode</key>
 				<integer>1</integer>
 				<key>runningsubtext</key>
 				<string>Fetching dashboards</string>
 				<key>script</key>
-				<string>bin/dashboards</string>
+				<string>bin/dashboards '{query}'</string>
 				<key>scriptargtype</key>
 				<integer>0</integer>
 				<key>scriptfile</key>
@@ -108,20 +108,24 @@
 		<key>34E356C6-0798-4CD8-B76F-0F9F33B3C373</key>
 		<dict>
 			<key>xpos</key>
-			<integer>300</integer>
+			<real>300</real>
 			<key>ypos</key>
-			<real>10</real>
+			<real>15</real>
 		</dict>
 		<key>8FAFF89C-6785-48F3-AD9A-09F7AED457E9</key>
 		<dict>
 			<key>xpos</key>
-			<integer>500</integer>
+			<real>500</real>
 			<key>ypos</key>
-			<real>10</real>
+			<real>15</real>
 		</dict>
 	</dict>
+	<key>userconfigurationconfig</key>
+	<array/>
 	<key>variables</key>
 	<dict>
+		<key>GRAFANA_API_TOKEN</key>
+		<string></string>
 		<key>GRAFANA_BASIC_AUTH_PASSWORD</key>
 		<string></string>
 		<key>GRAFANA_BASIC_AUTH_USER</key>

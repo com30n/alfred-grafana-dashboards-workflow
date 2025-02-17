@@ -1,3 +1,5 @@
+# Forked from [alfred-grafana-dashboards-workflow](https://github.com/leejones/alfred-grafana-dashboards-workflow)
+
 # alfred-grafana-dashboards-workflow
 
 An Alfred workflow to search your [Grafana](https://grafana.com) dashboards and select one to open in your default browser.

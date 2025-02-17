@@ -5,7 +5,7 @@ WORKSPACE := ./tmp
 build: clean
 	@mkdir -p $(WORKSPACE)
 	@go build -o bin/dashboards main.go
-	@zip $(WORKSPACE)/$(PROJECT_NAME).alfredworkflow info.plist bin/dashboards
+	@zip $(WORKSPACE)/$(PROJECT_NAME).alfredworkflow info.plist bin/dashboards icons/* icon.png
 
 .PHONY:  clean
 clean:

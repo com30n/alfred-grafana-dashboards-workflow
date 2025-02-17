@@ -3,25 +3,62 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/leejones/netrc"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"strings"
-
-	"github.com/leejones/netrc"
 )
+
+var logLevel = os.Getenv("LOG_LEVEL")
+
+var (
+	InfoLog  *log.Logger
+	DebugLog *log.Logger
+	ErrorLog *log.Logger
+)
+
+func init() {
+	logFileName := os.Getenv("LOG_FILE")
+	if logFileName == "" {
+		logFileName = "dashboards.log"
+	}
+	logFile, err := os.OpenFile(logFileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	InfoLog = log.New(logFile, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
+	DebugLog = log.New(logFile, "DEBUG: ", log.Ldate|log.Ltime|log.Lshortfile)
+	ErrorLog = log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
+}
+
+func logger(l string) {
+	if logLevel == "DEBUG" {
+		DebugLog.Println(l)
+	} else {
+		InfoLog.Println(l)
+	}
+}
 
 type alfredCollection struct {
 	Items []alfredItem `json:"items"`
 }
+
+type Icon struct {
+	Path string `json:"path"`
+}
+
 type alfredItem struct {
 	Arg      string `json:"arg"`
 	Title    string `json:"title"`
 	Subtitle string `json:"subtitle"`
 	Match    string `json:"match"`
 	UID      string `json:"uid"`
+	Icon     Icon   `json:"icon"`
 }
 
 type dashboard struct {
@@ -36,14 +73,40 @@ type dashboard struct {
 	// 	"tags": [],
 	// 	"isStarred": false
 	// }
-	UID   string `json:"uid"`
-	Title string `json:"title"`
-	URL   string `json:"url"`
-	Type  string `json:"type"`
+	UID         string `json:"uid"`
+	Title       string `json:"title"`
+	URL         string `json:"url"`
+	Type        string `json:"type"`
+	IsStarred   bool   `json:"isStarred"`
+	FolderTitle string `json:"folderTitle"`
+}
+
+func addAuth(req *http.Request) {
+	apiToken := os.Getenv("GRAFANA_API_TOKEN")
+	grafanaUser := os.Getenv("GRAFANA_BASIC_AUTH_USER")
+	grafanaPassword := os.Getenv("GRAFANA_BASIC_AUTH_PASSWORD")
+
+	if apiToken != "" {
+		req.Header.Add("Authorization", "Bearer "+apiToken)
+	} else {
+		if grafanaUser == "" || grafanaPassword == "" {
+			ErrorLog.Printf("load credentials: ENV vars not set: GRAFANA_BASIC_AUTH_USER, GRAFANA_BASIC_AUTH_PASSWORD")
+			basicAuth, err := netrc.Get(req.Host)
+			if err != nil {
+				ErrorLog.Printf("load credentials: unable to load from netrc: %v\n", err)
+			} else {
+				ErrorLog.Printf("load credentials: found credentials in netrc")
+				grafanaUser = basicAuth.Username
+				grafanaPassword = basicAuth.Password
+			}
+		}
+		req.SetBasicAuth(grafanaUser, grafanaPassword)
+	}
 }
 
 func main() {
 	grafanaHost := os.Getenv("GRAFANA_HOST")
+	query := strings.TrimSpace(os.Args[1])
 	apiURL, err := url.Parse(grafanaHost)
 	if err != nil {
 		fmt.Println("ERROR:", err)
@@ -51,40 +114,34 @@ func main() {
 	}
 	apiURL.Path = path.Join(apiURL.Path, "api/search")
 
-	grafanaUser := os.Getenv("GRAFANA_BASIC_AUTH_USER")
-	grafanaPassword := os.Getenv("GRAFANA_BASIC_AUTH_PASSWORD")
-	if grafanaUser == "" || grafanaPassword == "" {
-		fmt.Fprintf(os.Stderr, "load credentials: ENV vars not set: GRAFANA_BASIC_AUTH_USER, GRAFANA_BASIC_AUTH_PASSWORD\n")
-		basicAuth, err := netrc.Get(apiURL.Host)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "load credentials: unable to load from netrc: %v\n", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "load credentials: found credentials in netrc\n")
-			grafanaUser = basicAuth.Username
-			grafanaPassword = basicAuth.Password
-		}
-	}
-
 	httpClient := &http.Client{}
 	req, err := http.NewRequest("GET", apiURL.String(), nil)
 	if err != nil {
-		fmt.Println("ERROR:", err)
+		ErrorLog.Print(err)
 		os.Exit(1)
 	}
-	req.SetBasicAuth(grafanaUser, grafanaPassword)
+	addAuth(req)
+	if query != "" {
+		q := req.URL.Query()
+		q.Add("query", query)
+		req.URL.RawQuery = q.Encode()
+	}
+	logger(fmt.Sprintf("Requesting: %s", req.URL.String()))
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		fmt.Println("ERROR:", err)
+		ErrorLog.Print(err)
 		os.Exit(1)
 	}
+	logger(fmt.Sprintf("Response Status: %s", resp.Status))
+
 	if resp.StatusCode != http.StatusOK {
-		fmt.Println("ERROR: HTTP Response:", resp.StatusCode)
+		ErrorLog.Println("ERROR: HTTP Response:", resp.StatusCode)
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Println("ERROR:", err)
+		ErrorLog.Println("ERROR:", err)
 		os.Exit(1)
 	}
 
@@ -106,12 +163,21 @@ func main() {
 		match := strings.ReplaceAll(dashboard.Title, "(", "")
 		match = strings.ReplaceAll(match, ")", "")
 		match = strings.ReplaceAll(match, "/", "")
+		iconFile := "icons/dashboard.svg"
+		if dashboard.Type == "dash-folder" {
+			iconFile = "icons/folder.svg"
+		}
+		if dashboard.IsStarred {
+			iconFile = "icons/star.svg"
+		}
+		icon := Icon{Path: iconFile}
 		item := alfredItem{
 			Arg:      targetURL.String(),
 			Match:    match,
-			Subtitle: dashboard.Title,
+			Subtitle: dashboard.FolderTitle,
 			Title:    dashboard.Title,
 			UID:      dashboard.UID,
+			Icon:     icon,
 		}
 		items = append(items, item)
 	}
