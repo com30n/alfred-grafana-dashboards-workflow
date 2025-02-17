@@ -1,11 +1,10 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"github.com/leejones/netrc"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -13,36 +12,7 @@ import (
 	"strings"
 )
 
-var logLevel = os.Getenv("LOG_LEVEL")
-
-var (
-	InfoLog  *log.Logger
-	DebugLog *log.Logger
-	ErrorLog *log.Logger
-)
-
-func init() {
-	logFileName := os.Getenv("LOG_FILE")
-	if logFileName == "" {
-		logFileName = "dashboards.log"
-	}
-	logFile, err := os.OpenFile(logFileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	InfoLog = log.New(logFile, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
-	DebugLog = log.New(logFile, "DEBUG: ", log.Ldate|log.Ltime|log.Lshortfile)
-	ErrorLog = log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
-}
-
-func logger(l string) {
-	if logLevel == "DEBUG" {
-		DebugLog.Println(l)
-	} else {
-		InfoLog.Println(l)
-	}
-}
+var log = InitLogger()
 
 type alfredCollection struct {
 	Items []alfredItem `json:"items"`
@@ -62,17 +32,6 @@ type alfredItem struct {
 }
 
 type dashboard struct {
-	// {
-	// 	"id": 48,
-	// 	"uid": "24Xy_QsZz",
-	// 	"title": "(C1 2020) Selective Bulk Edit",
-	// 	"uri": "db/c1-2020-selective-bulk-edit",
-	// 	"url": "/d/24Xy_QsZz/c1-2020-selective-bulk-edit",
-	// 	"slug": "",
-	// 	"type": "dash-db",
-	// 	"tags": [],
-	// 	"isStarred": false
-	// }
 	UID         string `json:"uid"`
 	Title       string `json:"title"`
 	URL         string `json:"url"`
@@ -81,83 +40,96 @@ type dashboard struct {
 	FolderTitle string `json:"folderTitle"`
 }
 
-func addAuth(req *http.Request) {
-	apiToken := os.Getenv("GRAFANA_API_TOKEN")
-	grafanaUser := os.Getenv("GRAFANA_BASIC_AUTH_USER")
-	grafanaPassword := os.Getenv("GRAFANA_BASIC_AUTH_PASSWORD")
-
-	if apiToken != "" {
-		req.Header.Add("Authorization", "Bearer "+apiToken)
-	} else {
-		if grafanaUser == "" || grafanaPassword == "" {
-			ErrorLog.Printf("load credentials: ENV vars not set: GRAFANA_BASIC_AUTH_USER, GRAFANA_BASIC_AUTH_PASSWORD")
-			basicAuth, err := netrc.Get(req.Host)
-			if err != nil {
-				ErrorLog.Printf("load credentials: unable to load from netrc: %v\n", err)
-			} else {
-				ErrorLog.Printf("load credentials: found credentials in netrc")
-				grafanaUser = basicAuth.Username
-				grafanaPassword = basicAuth.Password
-			}
-		}
-		req.SetBasicAuth(grafanaUser, grafanaPassword)
-	}
-}
-
 func main() {
 	grafanaHost := os.Getenv("GRAFANA_HOST")
 	query := strings.TrimSpace(os.Args[1])
+
+	apiURL, err := buildAPIURL(grafanaHost)
+	if err != nil {
+		log.Fatalf("ERROR: %v", err)
+	}
+
+	req, err := createRequest(apiURL, query)
+	if err != nil {
+		log.Fatalf("ERROR: %v", err)
+	}
+
+	resp, err := sendRequest(req)
+	if err != nil {
+		log.Fatalf("ERROR: %v", err)
+	}
+	defer resp.Body.Close()
+
+	dashboards, err := parseResponse(resp)
+	if err != nil {
+		log.Fatalf("ERROR: %v", err)
+	}
+
+	items := buildAlfredItems(dashboards, grafanaHost)
+	outputJSON(items)
+}
+
+func buildAPIURL(grafanaHost string) (*url.URL, error) {
 	apiURL, err := url.Parse(grafanaHost)
 	if err != nil {
-		fmt.Println("ERROR:", err)
-		os.Exit(1)
+		return nil, err
 	}
 	apiURL.Path = path.Join(apiURL.Path, "api/search")
+	return apiURL, nil
+}
 
-	httpClient := &http.Client{}
+func createRequest(apiURL *url.URL, query string) (*http.Request, error) {
 	req, err := http.NewRequest("GET", apiURL.String(), nil)
 	if err != nil {
-		ErrorLog.Print(err)
-		os.Exit(1)
+		return nil, err
 	}
-	addAuth(req)
+
+	AddAuth(req)
 	if query != "" {
 		q := req.URL.Query()
 		q.Add("query", query)
 		req.URL.RawQuery = q.Encode()
 	}
-	logger(fmt.Sprintf("Requesting: %s", req.URL.String()))
+
+	log.Debugf("Requesting: %s", req.URL.String())
+	return req, nil
+}
+
+func sendRequest(req *http.Request) (*http.Response, error) {
+	tr := http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	httpClient := &http.Client{Transport: &tr}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		ErrorLog.Print(err)
-		os.Exit(1)
+		return nil, err
 	}
-	logger(fmt.Sprintf("Response Status: %s", resp.Status))
+	log.Debugf("Response Status: %s", resp.Status)
 
 	if resp.StatusCode != http.StatusOK {
-		ErrorLog.Println("ERROR: HTTP Response:", resp.StatusCode)
-		os.Exit(1)
+		return nil, fmt.Errorf("HTTP Response: %d", resp.StatusCode)
 	}
-	defer resp.Body.Close()
+	return resp, nil
+}
+
+func parseResponse(resp *http.Response) ([]dashboard, error) {
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		ErrorLog.Println("ERROR:", err)
-		os.Exit(1)
+		return nil, err
 	}
 
 	var dashboards []dashboard
 	err = json.Unmarshal(body, &dashboards)
 	if err != nil {
-		fmt.Println("ERROR:", err)
-		os.Exit(1)
+		return nil, err
 	}
+	return dashboards, nil
+}
 
+func buildAlfredItems(dashboards []dashboard, grafanaHost string) []alfredItem {
 	var items []alfredItem
 	for _, dashboard := range dashboards {
 		targetURL, err := url.Parse(grafanaHost)
 		if err != nil {
-			fmt.Println("ERROR:", err)
-			os.Exit(1)
+			log.Fatalf("ERROR: %v", err)
 		}
 		targetURL.Path = path.Join(targetURL.Path, dashboard.URL)
 		match := strings.ReplaceAll(dashboard.Title, "(", "")
@@ -181,9 +153,16 @@ func main() {
 		}
 		items = append(items, item)
 	}
+	return items
+}
+
+func outputJSON(items []alfredItem) {
 	collection := alfredCollection{
 		Items: items,
 	}
-	jsonData, _ := json.Marshal(collection)
+	jsonData, err := json.Marshal(collection)
+	if err != nil {
+		log.Fatalf("ERROR: %v", err)
+	}
 	fmt.Println(string(jsonData))
 }
